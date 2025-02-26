@@ -75,11 +75,13 @@ pub struct Stream<T, Out: Write> {
     borders: bool,
     padding: bool,
     title: Option<String>,
+    empty_row: Option<String>,
 
     #[allow(dead_code)] // TODO
     wrap: bool,
 
     sizes_calculated: bool,
+    has_rows: bool,
     width: usize, // calculated.
     buffer: Vec<T>,
 
@@ -112,8 +114,10 @@ impl <T, Out: Write> Stream<T, Out> {
             borders: false,
             padding: true,
             title: None,
+            empty_row: None,
 
             sizes_calculated: false,
+            has_rows: false,
             buffer: vec![],
 
             str_buf: String::new(),
@@ -179,10 +183,18 @@ impl <T, Out: Write> Stream<T, Out> {
         self.max_width(width)
     }
 
+    /// Set an empty row, to be displayed if finish or footer is called when the table has no rows
+    pub fn empty_row(mut self, empty_row: &str) -> Self {
+        self.empty_row = Some(empty_row.to_string());
+        let width = self.max_width;
+        self.max_width(width)
+    }
+
     /// Print a single row.
     /// Note: Stream may buffer some rows before it begins output to calculate 
     /// column sizes.
     pub fn row(&mut self, data: T) -> io::Result<()> {
+        self.has_rows = true;
 
         if self.sizes_calculated {
             return self.print_row(data);
@@ -238,6 +250,19 @@ impl <T, Out: Write> Stream<T, Out> {
             }
             self.border_right()?;
             self.hr()?;
+        }
+
+        Ok(())
+    }
+
+    fn print_empty_row(&mut self) -> io::Result<()> {
+        if let Some(empty_row) = &self.empty_row {
+            let border_width = if self.borders { 1 } else { 0 } + if self.padding { 1 } else { 0 };
+            let empty_row_width = self.width - (border_width * 2);
+            let empty_row = empty_row.clone();
+            self.border_left()?;
+            Alignment::Center.write(&mut self.output, empty_row_width, &empty_row)?;
+            self.border_right()?;
         }
 
         Ok(())
@@ -455,20 +480,35 @@ impl <T, Out: Write> Stream<T, Out> {
     /// Finish writing output.
     /// This may write any items still in the buffer,
     /// as well as a trailing horizontal line and footer.
-    pub fn finish(mut self) -> io::Result<()> {
-        if !self.buffer.is_empty() {
+    ///
+    /// Returns:
+    /// - `Ok(usize)`: The final width of the table.
+    /// - `Err(io::Error)`: If an error occurs during writing.
+    pub fn finish(mut self) -> io::Result<usize> {
+        if !self.buffer.is_empty() || !self.has_rows {
             self.write_buffer()?;
+
+            if !self.has_rows {
+                self.print_empty_row()?;
+            }
         }
         self.hr()?;
 
-       
-        Ok(())
+        Ok(self.width)
     }
 
     /// Like [`finish`], but adds a footer at the end as well.
-    pub fn footer(mut self, footer: &str) -> io::Result<()> {
-        if !self.buffer.is_empty() {
+    /// 
+    /// Returns:
+    /// - `Ok(usize)`: The final width of the table.
+    /// - `Err(io::Error)`: If an error occurs during writing.
+    pub fn footer(mut self, footer: &str) -> io::Result<usize> {
+        if !self.buffer.is_empty() || !self.has_rows {
             self.write_buffer()?;
+
+            if !self.has_rows {
+                self.print_empty_row()?;
+            }
         }
         
         let border_width = if self.borders { 1 } else { 0 } + if self.padding { 1 } else { 0 };
@@ -480,7 +520,7 @@ impl <T, Out: Write> Stream<T, Out> {
         self.border_right()?;
         self.hr()?;
 
-        Ok(())
+        Ok(self.width)
     }
 }
 
